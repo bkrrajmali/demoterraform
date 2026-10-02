@@ -1,0 +1,166 @@
+1. Install AZ cli
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+2. install kubectl
+cd /usr/local/bin/
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod 777 kubectl
+sudo mv kubectl /usr/local/bin
+
+sudo snap install --classic certbot
+cd /snap/bin/
+cp certbot /usr/local/bin/
+certbot  -h
+certbot certonly --manual --preferred-challenges=dns --emailsddsdsds@gmail.com \
+--server https://acme-v02.api.letsencrypt.org/directory --agree-tos -d *.dsdsdsdsd.xyz
+
+sudo su -
+certbot certonly --manual --preferred-challenges=dns --emailsddsdsds@gmail.com \
+--server https://acme-v02.api.letsencrypt.org/directory --agree-tos -d *.dsdsdsdsd.xyz
+
+fullchain is crt
+cp fullchain.pem tls.crt
+cp privkey.pem tls.key
+
+wait until kubernetes is ready
+kubectl create secret tls nginx-tls-default --key="tls.key" --cert="tls.crt"  *this step need to run only after kuberntes is ready*
+
+kubectl create deploy red --image=bkrrajmali/red-strawberry:v2 --replicas 5
+kubectl create deploy blue --image=bkrrajmali/blue-blueberry:v2 --replicas 5
+kubectl create deploy green --image=bkrrajmali/green-apple:v2 --replicas 5
+
+kubectl expose deployment red --port=80 --target-port=80 
+kubectl expose deployment green --port=80 --target-port=80 
+kubectl expose deployment blue --port=80 --target-port=80
+
+# Install gateway-api
+kubectl apply -f \
+https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml
+
+# Install helm
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4
+chmod 700 get_helm.sh
+./get_helm.sh
+
+helm install nginx-gateway \
+oci://ghcr.io/nginxinc/charts/nginx-gateway-fabric \
+--version 1.2.0 \
+--create-namespace \
+-n nginx-gateway
+
+#gateway.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: devopsazure-gateway
+spec:
+  gatewayClassName: nginx
+  listeners:
+  - name: https
+    protocol: HTTPS
+    port: 443
+    hostname: "*.devopsazure.xyz"
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: nginx-tls-default
+#Create Routes  routes.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: red-route
+spec:
+  parentRefs:
+  - name: devopsazure-gateway
+  hostnames:
+  - "red.devopsazure.xyz"
+  rules:
+  - backendRefs:
+    - name: red
+      port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: blue-route
+spec:
+  parentRefs:
+  - name: devopsazure-gateway
+  hostnames:
+  - "blue.devopsazure.xyz"
+  rules:
+  - backendRefs:
+    - name: blue
+      port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: green-route
+spec:
+  parentRefs:
+  - name: devopsazure-gateway
+  hostnames:
+  - "green.devopsazure.xyz"
+  rules:
+  - backendRefs:
+    - name: green
+      port: 80
+
+kubectl apply -f gateway.yaml routes.yaml
+
+
+
+kubectl get svc -A
+
+
+
+az login --use-device-code
+####Cluster Creation
+# 1. Variables
+RG="AKS"
+LOCATION="centralindia"
+AKS_NAME="demoaks"
+
+# 2. Resource Group
+az group create \
+  --name $RG \
+  --location $LOCATION
+
+# 3. Create AKS with System Pool
+az aks create \
+  --resource-group $RG \
+  --name $AKS_NAME \
+  --location $LOCATION \
+  --nodepool-name systempool \
+  --node-count 1 \
+  --node-vm-size Standard_B2s \
+  --enable-node-public-ip \
+  --load-balancer-sku standard \
+  --generate-ssh-keys
+
+# 4. Add User Pool
+az aks nodepool add \
+  --resource-group $RG \
+  --cluster-name $AKS_NAME \
+  --name userpool \
+  --mode User \
+  --node-count 1 \
+  --node-vm-size Standard_B2s \
+  --enable-node-public-ip
+
+# 5. Get credentials
+az aks get-credentials \
+  --resource-group $RG \
+  --name $AKS_NAME
+
+# 6. Verify nodes
+kubectl get nodes -o wide
+
+# 7. Verify pools
+az aks nodepool list \
+  --resource-group $RG \
+  --cluster-name $AKS_NAME \
+  -o table
+
+
