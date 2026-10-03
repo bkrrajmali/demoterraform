@@ -1,0 +1,66 @@
+Migration
+
+sudo apt update && sudo apt full-upgrade -y
+sudo apt install -y nginx
+sudo reboot
+
+
+printf "hv_vmbus\nhv_storvsc\nhv_netvsc\n" | sudo tee -a /etc/initramfs-tools/modules
+sudo update-initramfs -u
+lsinitramfs /boot/initrd.img-$(uname -r) | grep -E "hv_(vmbus|storvsc|netvsc)"
+
+
+sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0,115200n8 earlyprintk=ttyS0,115200 rootdelay=300"/' /etc/default/grub
+sudo update-grub
+
+sudo apt install -y walinuxagent cloud-init netplan.io
+sudo sed -i 's/^Provisioning.Enabled=.*/Provisioning.Enabled=n/; s/^Provisioning.UseCloudInit=.*/Provisioning.UseCloudInit=y/; s/^ResourceDisk.Format=.*/ResourceDisk.Format=n/; s/^ResourceDisk.EnableSwap=.*/ResourceDisk.EnableSwap=n/' /etc/waagent.conf
+sudo systemctl enable walinuxagent
+
+
+sudo rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg \
+  /etc/cloud/cloud.cfg.d/curtin-preserve-sources.cfg \
+  /etc/cloud/cloud.cfg.d/99-installer.cfg \
+  /etc/cloud/cloud.cfg.d/subiquity-disable-cloudinit-networking.cfg \
+  /etc/cloud/ds-identify.cfg
+sudo rm -f /etc/netplan/*.yaml
+echo 'datasource_list: [ Azure ]' | sudo tee /etc/cloud/cloud.cfg.d/90_dpkg.cfg
+
+
+
+sudo cloud-init clean --logs --seed
+sudo systemctl stop walinuxagent
+sudo rm -rf /var/lib/waagent/ /var/log/waagent.log
+sudo shutdown -h now
+
+
+
+esxcli status 111          # must say: status: stopped
+mkdir -p /var/lib/vz/azure
+lvchange -ay pve/vm-111-disk-0
+
+qemu-img convert -p -f raw -O vpc -o subformat=fixed,force_size \
+  /dev/pve/vm-111-disk-0 /var/lib/vz/azure/nginx-web01.vhd
+
+
+
+tail -c 512 /var/lib/vz/azure/nginx-web01.vhd | head -c 8; echo
+qemu-img info -f vpc /var/lib/vz/azure/nginx-web01.vhd
+
+vmkfstools -i /vmfs/volumes/datastore1/nginx-web01/nginx-web01.vmdk \
+/vmfs/volumes/datastore1/nginx-web01/nginx-web01.vhd \
+-d zeroedthick
+
+qemu-img convert -p \
+  -f raw \
+  -O vpc \
+  -o subformat=fixed,force_size \
+  /dev/pve/vm-111-disk-0 \
+  /var/lib/vz/azure/nginx-web01.vhd
+
+cd /root
+wget -O azcopy.tar.gz https://aka.ms/downloadazcopy-v10-linux
+tar -xzf azcopy.tar.gz --strip-components=1
+./azcopy copy /var/lib/vz/azure/nginx-web01.vhd \
+  "https://mystorageacct12345762314.blob.core.windows.net/vhds/nginx-web01.vhd?<SAS-token>" \
+  --blob-type PageBlob
